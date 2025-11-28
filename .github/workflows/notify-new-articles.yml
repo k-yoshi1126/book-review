@@ -1,0 +1,43 @@
+name: Notify New Articles
+
+on:
+  schedule:
+    - cron: "0 1 * * 1-5"  # 平日 / 日本時間10時（UTC+1）
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+
+      # ★ Artifact から known_urls.json をダウンロード（初回は存在しない）
+      - name: Download known_urls artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: known_urls
+          path: data
+        continue-on-error: true
+
+      - name: Run checker
+        run: python scripts/check_articles.py
+        env:
+          SLACK_BOOKREVIEW_WEBHOOK_URL: ${{ secrets.SLACK_BOOKREVIEW_WEBHOOK_URL }}
+
+      # ★ 処理後の known_urls.json を Artifact に再アップロード
+      - name: Upload updated artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: known_urls
+          path: data/

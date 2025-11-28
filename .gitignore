@@ -1,0 +1,15 @@
+# プロジェクト全体の除外設定
+
+# Environment files (全プロジェクト共通)
+.env
+.env.*
+!.env.example
+
+# Data files(for artifact)
+data/
+
+# OS
+.DS_Store
+
+# Cursor
+.cursor/
