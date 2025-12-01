@@ -22,22 +22,75 @@ jobs:
         run: |
           pip install requests beautifulsoup4
 
-      # ★ Artifact から known_urls.json をダウンロード（初回は存在しない）
-      - name: Download known_urls artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: known_urls
-          path: data
+      # ★ 前回の実行から known_urls.json をアーティファクトとしてダウンロード（初回は存在しない）
+      - name: Get previous workflow run ID
+        uses: actions/github-script@v7
+        id: get-run-id
         continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: context.workflow,
+              per_page: 2
+            });
+            
+            const previousRun = runs.data.workflow_runs.find(
+              run => run.id !== context.runId && run.status === 'completed'
+            );
+            
+            if (previousRun) {
+              core.setOutput('run_id', previousRun.id.toString());
+              console.log(`Found previous run ID: ${previousRun.id}`);
+            } else {
+              console.log('No previous completed run found');
+            }
+
+      - name: Download artifact from previous run
+        run: |
+          if [ -n "${{ steps.get-run-id.outputs.run_id }}" ]; then
+            mkdir -p data
+            # GitHub APIでアーティファクトのダウンロードURLを取得
+            ARTIFACT_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ steps.get-run-id.outputs.run_id }}/artifacts" \
+              | jq -r '.artifacts[] | select(.name=="known_urls") | .archive_download_url')
+            
+            if [ -n "$ARTIFACT_URL" ] && [ "$ARTIFACT_URL" != "null" ]; then
+              echo "Downloading artifact from: $ARTIFACT_URL"
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                "$ARTIFACT_URL" -o /tmp/artifact.zip
+              
+              # ZIPを展開
+              unzip -q /tmp/artifact.zip -d data/ || true
+              rm -f /tmp/artifact.zip
+              echo "Artifact downloaded successfully"
+            else
+              echo "No artifact found in previous run"
+            fi
+          fi
+        continue-on-error: true
+
+      # 初回実行時は known_urls.json が存在しない可能性があるため、data ディレクトリを確実に作成
+      - name: Ensure data directory exists
+        run: |
+          mkdir -p data
+          # 初回実行時は known_urls.json が存在しないため、空のファイルを作成
+          if [ ! -f data/known_urls.json ]; then
+            echo "[]" > data/known_urls.json
+          fi
 
       - name: Run checker
         run: python scripts/check_articles.py
         env:
           SLACK_BOOKREVIEW_WEBHOOK_URL: ${{ secrets.SLACK_BOOKREVIEW_WEBHOOK_URL }}
 
-      # ★ 処理後の known_urls.json を Artifact に再アップロード
-      - name: Upload updated artifact
+      # ★ 処理後の known_urls.json を Artifact にアップロード
+      - name: Upload known_urls artifact
         uses: actions/upload-artifact@v4
         with:
           name: known_urls
-          path: data/
+          path: data/known_urls.json
+          retention-days: 90
